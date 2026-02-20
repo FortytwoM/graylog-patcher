@@ -1,0 +1,21 @@
+FROM python:3.9-slim
+
+WORKDIR /app
+
+RUN pip install --no-cache-dir PyJWT cryptography
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        default-jdk-headless \
+        curl \
+        && rm -rf /var/lib/apt/lists/*
+
+COPY graylog-patcher.py build-patched-jar.sh ./
+COPY tools/ ./tools/
+RUN curl -sL -o /app/tools/javassist.jar https://repo1.maven.org/maven2/org/javassist/javassist/3.29.2-GA/javassist-3.29.2-GA.jar
+
+RUN chmod +x build-patched-jar.sh graylog-patcher.py
+
+RUN mkdir -p /output
+
+ENTRYPOINT ["./build-patched-jar.sh"]

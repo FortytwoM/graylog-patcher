@@ -1,0 +1,11 @@
+.git/
+output/
+input/
+*.jar
+*.class
+*.pem
+*.jks
+*.md
+.gitignore
+docker-compose.yml
+create-license-in-mongodb.sh

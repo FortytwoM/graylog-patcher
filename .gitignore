@@ -1,0 +1,39 @@
+# Build artifacts
+output/
+*.jar
+*.class
+
+# Keys and certificates
+*.pem
+*.jks
+
+# JWT tokens
+license-jwt.txt
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.project
+.classpath
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Docker volumes
+mongo_data/
+os_data/
+graylog_data/
+graylog_journal/
+
+# Temp
+*.log
+*.tmp
+*.bak
