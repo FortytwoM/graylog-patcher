@@ -31,7 +31,7 @@ services:
       - "9200:9200"
 
   graylog:
-    image: graylog/graylog-enterprise:7.0.3
+    image: graylog/graylog-enterprise:${GRAYLOG_VERSION:-7.0.3}
     container_name: graylog
     depends_on:
       mongo:
@@ -50,8 +50,8 @@ services:
       GRAYLOG_IS_LEADER: "true"
     ports:
       - "9000:9000"
-      - "12201:12201/udp"
-      - "12201:12201/tcp"
+#      - "12201:12201/udp"
+#      - "12201:12201/tcp"
       - "15140:1514/udp"
       - "15140:1514/tcp"
     volumes:

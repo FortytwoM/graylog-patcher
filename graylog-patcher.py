@@ -268,7 +268,7 @@ def main():
                 "cluster_ids": [],
                 "traffic_check_range": 86400000,
                 "allowed_remote_check_failures": 3,
-                "allowed_traffic_violations": 0,
+                "allowed_traffic_violations": 999999,
                 "traffic_limit": 999999999999999,
                 "expiration_warning_range": 2592000000,
                 "require_remote_check": False,

@@ -51,6 +51,8 @@ public class UnifiedPatcher {
             patchTrafficThreshold(pool, patches);
             patchClassesByString(pool, jarPath, "has no contract ID", patches);
             patchClassesByString(pool, jarPath, "volume has been used", patches);
+            patchClassesByString(pool, jarPath, "traffic threshold warning", patches);
+            patchClassesByString(pool, jarPath, "threshold warning", patches);
 
             if (patches.isEmpty()) {
                 System.err.println("WARN: nothing was patched");
@@ -154,28 +156,15 @@ public class UnifiedPatcher {
             CtClass cc = pool.get(cls);
             int n = 0;
 
-            for (CtMethod m : cc.getDeclaredMethods()) {
-                if (!"checkStatus".equals(m.getName())) continue;
-                CtClass[] params = m.getParameterTypes();
-                if (params.length == 1 && params[0].getName().contains("License")) {
-                    String rt;
-                    try { rt = m.getReturnType().getName(); } catch (Exception e) { break; }
-                    String ret = "void".equals(rt) ? "return;" : "boolean".equals(rt) ? "return true;" : "return null;";
-                    String cond = "$1 != null && $1 instanceof org.graylog.plugins.license.api.License && \""
-                                  + LICENSE_ID + "\".equals(((org.graylog.plugins.license.api.License)$1).id())";
-                    try { m.insertBefore("if (" + cond + ") { " + ret + " }"); n++; }
-                    catch (Exception ignored) {}
-                    break;
-                }
-            }
-
-            // Force active=true in checkLicenseStatus(License, ZonedDateTime, boolean)
+            // Force active=true in all checkLicenseStatus* methods (including DrawDown variants)
             for (CtMethod cm : cc.getDeclaredMethods()) {
-                if (!"checkLicenseStatus".equals(cm.getName())) continue;
+                if (!cm.getName().startsWith("checkLicenseStatus")) continue;
                 CtClass[] cp = cm.getParameterTypes();
-                if (cp.length == 3 && cp[2].getName().equals("boolean")) {
-                    try { cm.insertBefore("$3 = true;"); n++; } catch (Exception ignored) {}
-                    break;
+                for (int pi = 0; pi < cp.length; pi++) {
+                    if ("boolean".equals(cp[pi].getName())) {
+                        try { cm.insertBefore("$" + (pi + 1) + " = true;"); n++; } catch (Exception ignored) {}
+                        break;
+                    }
                 }
             }
 
@@ -332,7 +321,9 @@ public class UnifiedPatcher {
             if (n > 0) {
                 patches.put(path, cc.toBytecode());
             }
-            cc.detach();
+            if (!patches.containsKey(path)) {
+                cc.detach();
+            }
             record("DrawdownLicenseService", n);
         } catch (Exception e) {
             System.err.println("WARN: DrawdownLicenseService: " + e.getMessage());
@@ -379,27 +370,41 @@ public class UnifiedPatcher {
 
             for (CtMethod m : cc.getDeclaredMethods()) {
                 CtClass[] params = m.getParameterTypes();
-                if (params.length != 1) continue;
-                String pType = params[0].getName();
-                String ret = m.getReturnType().getName();
+                String ret;
+                try { ret = m.getReturnType().getName(); } catch (Exception e) { continue; }
                 String earlyRet = earlyReturnForViolation(ret);
                 if (earlyRet == null) continue;
 
-                String cond = null;
-                if (pType.endsWith(".License") || pType.equals("org.graylog.plugins.license.api.License"))
-                    cond = "$1 != null && \"" + LICENSE_ID + "\".equals($1.id())";
-                else if ("java.lang.String".equals(pType))
-                    cond = "$1 != null && (\"" + CONTRACT_ID + "\".equals($1) || \"" + LICENSE_ID + "\".equals($1))";
-                if (cond == null) continue;
+                if (params.length == 0) {
+                    try { m.setBody("{ " + earlyRet + " }"); n++; }
+                    catch (Exception ignored) {}
+                    continue;
+                }
 
-                try { m.insertBefore("if (" + cond + ") { " + earlyRet + " }"); n++; }
-                catch (Exception ignored) {}
+                for (int i = 0; i < params.length; i++) {
+                    String pType = params[i].getName();
+                    String d = "$" + (i + 1);
+                    String cond = null;
+
+                    if (pType.endsWith(".License") || pType.equals("org.graylog.plugins.license.api.License"))
+                        cond = d + " != null && \"" + LICENSE_ID + "\".equals(" + d + ".id())";
+                    else if ("java.lang.String".equals(pType))
+                        cond = d + " != null && (\"" + CONTRACT_ID + "\".equals(" + d + ") || \"" + LICENSE_ID + "\".equals(" + d + "))";
+
+                    if (cond != null) {
+                        try { m.insertBefore("if (" + cond + ") { " + earlyRet + " }"); n++; }
+                        catch (Exception ignored) {}
+                        break;
+                    }
+                }
             }
 
             if (n > 0) {
                 patches.put(path, cc.toBytecode());
             }
-            cc.detach();
+            if (!patches.containsKey(path)) {
+                cc.detach();
+            }
             record("TrafficThresholdService", n);
         } catch (Exception e) {
             System.err.println("WARN: TrafficThresholdService: " + e.getMessage());
@@ -422,7 +427,9 @@ public class UnifiedPatcher {
                     totalMethods += n;
                     classCount++;
                 }
-                cc.detach();
+                if (!patches.containsKey(classPath)) {
+                    cc.detach();
+                }
             } catch (Exception e) {
                 System.err.println("WARN: " + className + ": " + e.getMessage());
             }
@@ -446,6 +453,12 @@ public class UnifiedPatcher {
             try { ret = m.getReturnType().getName(); } catch (Exception e) { continue; }
             String earlyRet = earlyReturnForViolation(ret);
             if (earlyRet == null) continue;
+
+            if (params.length == 0) {
+                try { m.setBody("{ " + earlyRet + " }"); n++; }
+                catch (Exception ignored) {}
+                continue;
+            }
 
             for (int i = 0; i < params.length; i++) {
                 String pname = params[i].getName();

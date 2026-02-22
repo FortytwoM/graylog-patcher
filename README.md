@@ -2,7 +2,7 @@
 
 Bytecode-level patcher that activates Graylog Enterprise features by modifying the `enterprise-plugin.jar` at runtime via [Javassist](https://www.javassist.org/). Generates a self-signed JWT license, replaces the JKS keystore inside the JAR, and patches several classes to bypass license validation.
 
-**Tested on Graylog Enterprise 7.0.x.**
+**Version-agnostic** — works with any Graylog Enterprise version. Tested on 6.x and 7.x.
 
 ## How it works
 
@@ -15,14 +15,15 @@ The patcher runs inside a Docker container and performs the following steps:
    - `LicenseChecker` — suppresses violation checks and forces `active = true` for the generated license.
    - `DefaultLicenseManager` — makes `hasValidLicense()` and `hasUnexpiredLicense()` always return `true`; adds a fallback in `getLicenseStatus()` so the UI receives a valid status for every feature subject.
    - `DrawdownLicenseService` — makes `checkout()` a no-op to prevent "Failed to decrypt keystore" errors.
-   - `TrafficThresholdService` — prevents "License volume has been used" warnings.
-   - Dynamic patching of any class containing `"has no contract ID"` or `"volume has been used"` strings.
+   - `TrafficThresholdService` — prevents "License volume has been used" and "License traffic threshold warning" messages.
+   - Dynamic patching of any class containing `"has no contract ID"`, `"volume has been used"`, `"traffic threshold warning"`, or `"threshold warning"` strings.
 4. **JWT generation** — creates an RS256-signed JWT with all required claims.
 5. **MongoDB setup** — inserts the license document and a matching contract into MongoDB.
 
 ## Project structure
 
 ```
+├── .env                           # GRAYLOG_VERSION — single source of truth
 ├── Dockerfile.license-generator   # Docker image for building the patched JAR
 ├── build-patched-jar.sh           # Main build script (runs inside Docker)
 ├── graylog-patcher.py             # Python orchestrator (key gen, JWT, patch-all)
@@ -38,9 +39,29 @@ The patcher runs inside a Docker container and performs the following steps:
 - Docker & Docker Compose
 - A running Graylog Enterprise instance (the `docker-compose.yml` provides one)
 
+## Choosing the Graylog version
+
+All version-specific settings are controlled by a single variable in `.env`:
+
+```bash
+GRAYLOG_VERSION=7.0.3
+```
+
+Change this value **before** running any commands. Both `docker-compose.yml` and `build-patched-jar.sh` read it automatically.
+
+Examples:
+```bash
+echo "GRAYLOG_VERSION=6.1.0" > .env   # Graylog 6.1
+echo "GRAYLOG_VERSION=7.0.3" > .env   # Graylog 7.0.3
+```
+
 ## Quick start
 
-### 1. Start the stack
+### 1. Set the version
+
+Edit `.env` and set `GRAYLOG_VERSION` to the desired Graylog Enterprise version.
+
+### 2. Start the stack
 
 ```bash
 docker compose up -d
@@ -48,18 +69,22 @@ docker compose up -d
 
 Wait for Graylog to fully start (check `http://localhost:9000`).
 
-### 2. Extract the original JAR
+### 3. Extract the original JAR
 
 ```bash
+source .env
 mkdir -p input
-docker cp graylog:/usr/share/graylog/plugins-merged/graylog-plugin-enterprise-7.0.3.jar input/enterprise-plugin.jar
+docker cp graylog:/usr/share/graylog/plugins-merged/graylog-plugin-enterprise-${GRAYLOG_VERSION}.jar input/enterprise-plugin.jar
 ```
 
-### 3. Build the Docker image and generate the patched JAR
+### 4. Build the Docker image and generate the patched JAR
 
 ```bash
 docker build -f Dockerfile.license-generator -t graylog-license-generator:latest .
-docker run --rm -v "$(pwd)/input:/input" -v "$(pwd)/output:/output" graylog-license-generator:latest
+docker run --rm --env-file .env \
+  -v "$(pwd)/input:/input" \
+  -v "$(pwd)/output:/output" \
+  graylog-license-generator:latest
 ```
 
 This produces in `output/`:
@@ -67,26 +92,27 @@ This produces in `output/`:
 - `license-jwt.txt` — the JWT license token
 - `license_private_key.pem`, `license_public_key.pem`, `license_certificate.pem` — keys
 
-### 4. Deploy the patched JAR
+### 5. Deploy the patched JAR
 
 ```bash
-docker cp output/enterprise-plugin-patched.jar graylog:/usr/share/graylog/plugins-merged/graylog-plugin-enterprise-7.0.3.jar
-docker cp output/enterprise-plugin-patched.jar graylog:/usr/share/graylog/plugins-default/graylog-plugin-enterprise-7.0.3.jar
+source .env
+docker cp output/enterprise-plugin-patched.jar graylog:/usr/share/graylog/plugins-merged/graylog-plugin-enterprise-${GRAYLOG_VERSION}.jar
+docker cp output/enterprise-plugin-patched.jar graylog:/usr/share/graylog/plugins-default/graylog-plugin-enterprise-${GRAYLOG_VERSION}.jar
 ```
 
-### 5. Insert the license into MongoDB
+### 6. Insert the license into MongoDB
 
 ```bash
 bash create-license-in-mongodb.sh output/license-jwt.txt
 ```
 
-### 6. Restart Graylog
+### 7. Restart Graylog
 
 ```bash
 docker compose restart graylog
 ```
 
-### 7. Verify
+### 8. Verify
 
 Open `http://localhost:9000` (login: `admin` / `admin`).  
 All Enterprise features (Reporting, Archive, Auditlog, Customization, Security) should now show as licensed.
@@ -106,14 +132,14 @@ Expected: `"active": true`, `"valid": true`.
 | `JwtLicenseParser` | `parseToken(String)` | On `SignatureException`, decodes payload without verification |
 | `JwtLicenseParser` | `parse(LicenseDto)` | Injects fallback `contractId` for drawdown licenses |
 | `LicenseChecker` | `checkViolations*` | Returns early (empty/void) for license `generated-license-001` |
-| `LicenseChecker` | `checkLicenseStatus(License, ZonedDateTime, boolean)` | Forces `active = true` (`$3 = true`) |
+| `LicenseChecker` | `checkLicenseStatus*(...)` | Forces boolean `active` parameter to `true` (all variants including DrawDown) |
 | `DefaultLicenseManager` | `hasValidLicense(URI)` | Always returns `true` |
 | `DefaultLicenseManager` | `hasUnexpiredLicense(URI)` | Always returns `true` |
 | `DefaultLicenseManager` | `getLicenseStatus(URI, boolean)` | Falls back to `getLicenseStatuses()` when status map is empty |
 | `DefaultLicenseManager` | `getActiveLicenseStatus()` | Same fallback |
 | `DefaultLicenseManager` | `findReportLicenseStatus()` | Same fallback |
 | `DrawdownLicenseService` | `checkout()` | No-op (prevents keystore decryption errors) |
-| `TrafficThresholdService` | `*(License)` / `*(String)` | Returns empty/false for our license/contract ID |
+| `TrafficThresholdService` | `*()` / `*(License)` / `*(String)` | Returns empty/false for all methods (0-param, License, String) |
 
 ## Notes
 

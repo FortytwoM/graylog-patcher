@@ -23,7 +23,7 @@ if [ ! -f "$INPUT_JAR" ]; then
     echo "Example:"
     echo "  1. Copy the JAR into the input/ folder:"
     echo "     mkdir -p input"
-    echo "     docker cp graylog:/usr/share/graylog/plugins-merged/graylog-plugin-enterprise-7.0.3.jar input/enterprise-plugin.jar"
+    echo "     docker cp graylog:/usr/share/graylog/plugins-merged/graylog-plugin-enterprise-<VERSION>.jar input/enterprise-plugin.jar"
     echo ""
     echo "  2. Run the generator:"
     echo "     docker run --rm -v \"\$(pwd)/input:/input\" -v \"\$(pwd)/output:/output\" graylog-license-generator:latest"
@@ -39,6 +39,38 @@ if [ ! -f "$WORK_DIR/enterprise-plugin-main.jar" ]; then
 fi
 
 echo "[OK] JAR copied: $(du -h enterprise-plugin-main.jar | cut -f1)"
+
+# --- Version auto-detection ---
+# Priority: GRAYLOG_VERSION env > JAR filename > JAR manifest > "VERSION"
+if [ -z "$GRAYLOG_VERSION" ]; then
+    JAR_BASENAME=$(basename "$INPUT_JAR")
+    GRAYLOG_VERSION=$(echo "$JAR_BASENAME" | sed -n 's/.*graylog-plugin-enterprise-\(.*\)\.jar/\1/p')
+fi
+
+if [ -z "$GRAYLOG_VERSION" ]; then
+    GRAYLOG_VERSION=$(python3 -c "
+import zipfile, sys
+try:
+    with zipfile.ZipFile(sys.argv[1]) as z:
+        for line in z.read('META-INF/MANIFEST.MF').decode('utf-8', errors='ignore').splitlines():
+            for key in ['Implementation-Version', 'Bundle-Version', 'Graylog-Plugin-Properties-Version']:
+                if line.startswith(key + ':'):
+                    print(line.split(':', 1)[1].strip())
+                    sys.exit(0)
+except Exception:
+    pass
+" "$WORK_DIR/enterprise-plugin-main.jar" 2>/dev/null) || true
+fi
+
+if [ -z "$GRAYLOG_VERSION" ]; then
+    GRAYLOG_VERSION="VERSION"
+    echo "[WARN] Could not auto-detect Graylog version; using placeholder."
+    echo "       Set GRAYLOG_VERSION env or use the original JAR filename."
+else
+    echo "[OK] Graylog version: $GRAYLOG_VERSION"
+fi
+
+PLUGIN_JAR_NAME="graylog-plugin-enterprise-${GRAYLOG_VERSION}.jar"
 echo ""
 
 echo "[2/6] Generating RSA keys and certificate..."
@@ -173,8 +205,8 @@ echo "  - enterprise-plugin-main.jar     (original JAR, backup)"
 echo ""
 echo "Next steps:"
 echo "  1. Copy enterprise-plugin-patched.jar into the Graylog container:"
-echo "     docker cp output/enterprise-plugin-patched.jar graylog:/usr/share/graylog/plugins-merged/graylog-plugin-enterprise-7.0.3.jar"
-echo "     docker cp output/enterprise-plugin-patched.jar graylog:/usr/share/graylog/plugins-default/graylog-plugin-enterprise-7.0.3.jar"
+echo "     docker cp output/enterprise-plugin-patched.jar graylog:/usr/share/graylog/plugins-merged/${PLUGIN_JAR_NAME}"
+echo "     docker cp output/enterprise-plugin-patched.jar graylog:/usr/share/graylog/plugins-default/${PLUGIN_JAR_NAME}"
 echo ""
 echo "  2. Insert the license into MongoDB using license-jwt.txt:"
 echo "     bash create-license-in-mongodb.sh output/license-jwt.txt"
