@@ -257,6 +257,10 @@ public class UnifiedPatcher {
                 if ("findReportLicenseStatus".equals(name) && "java.util.Optional".equals(ret)) {
                     try { m.insertAfter(fallback); n++; } catch (Exception ignored) {}
                 }
+
+                if ("insertInactiveContracts".equals(name) && ret.contains("List")) {
+                    try { m.insertBefore("{ return $1; }"); n++; } catch (Exception ignored) {}
+                }
             }
 
             if (n > 0) {
